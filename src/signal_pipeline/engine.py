@@ -12,8 +12,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from . import features as feat
-from .battle_day import TZ, session_of, to_local
+from .battle_day import TZ, battle_day, session_of, to_local
 from .odds.base import OddsSource, Offer
+from .schedule import Schedule
 from .sinks.telegram import TelegramSink, format_signal
 from .store import insert_signal, mark_sent, now_utc, set_meta
 from .strategies.base import Strategy
@@ -86,7 +87,13 @@ def run_cycle(
         if kickoff - now < MIN_LEAD:
             continue
         local = to_local(offer.kickoff_utc)
-        session = session_of(local.strftime("%H:%M"), sessions)
+        # session from the block schedule when the venue is known, else from the clock
+        block = (
+            Schedule.bundled().block_at(offer.venue, battle_day(local), local.strftime("%H:%M"))
+            if offer.venue
+            else None
+        )
+        session = block.session if block else session_of(local.strftime("%H:%M"), sessions)
         for strategy in strategies:
             if not strategy.enabled or not strategy.wants(offer, session):
                 continue

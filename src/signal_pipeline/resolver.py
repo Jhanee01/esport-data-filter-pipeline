@@ -122,3 +122,38 @@ def summarise(conn: sqlite3.Connection, since_utc: str | None = None) -> list[Su
             )
         )
     return out
+
+
+def _empty_day() -> dict:
+    return {"total": 0, "won": 0, "lost": 0, "push": 0, "units": 0.0}
+
+
+def daily_stats(conn: sqlite3.Connection, strategy_ids: set[str] | None = None) -> dict[str, dict]:
+    """Settled signals per Battle day, overall and per session.
+
+    {"2026-11-03": {"all": {...}, "day": {...}, "afternoon": {...}, "night": {...}}}, where each
+    bucket has total / won / lost / push / units / roi (roi in percent of decided stakes).
+    """
+    from .battle_day import battle_day, to_local
+
+    out: dict[str, dict] = {}
+    rows = conn.execute(
+        "SELECT strategy_id, kickoff_utc, session, status, odds FROM signals"
+        " WHERE status IN ('won', 'lost', 'push')"
+    ).fetchall()
+    for r in rows:
+        if strategy_ids is not None and r["strategy_id"] not in strategy_ids:
+            continue
+        day = battle_day(to_local(r["kickoff_utc"]))
+        buckets = out.setdefault(day, {})
+        for key in ("all", r["session"] or "day"):
+            b = buckets.setdefault(key, _empty_day())
+            b["total"] += 1
+            b[r["status"]] += 1
+            b["units"] += profit(r["status"], r["odds"])
+    for buckets in out.values():
+        for b in buckets.values():
+            decided = b["won"] + b["lost"]
+            b["units"] = round(b["units"], 2)
+            b["roi"] = 100.0 * b["units"] / decided if decided else 0.0
+    return out

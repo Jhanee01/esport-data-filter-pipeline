@@ -24,7 +24,7 @@ signal-pipeline = "signal_pipeline.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-signal_pipeline = ["remote/static/*.html", "ui/theme_fdb900.xml", "ui/assets/*.png"]
+signal_pipeline = ["remote/static/*.html", "ui/theme_fdb900.xml", "ui/assets/*.png", "data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

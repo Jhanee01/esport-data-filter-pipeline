@@ -75,6 +75,9 @@ interface and the list of features.
 - **Honest backtests.** There is no historical odds data, so the backtest reports the hit rate
   and the break-even odds at an assumed price, rather than a profit figure that would only be
   as real as the price you typed in.
+- **The schedule is data.** Turnus and session come from the Battle block schedule
+  (`data/menetrend.json`, the same file esoccer-battle-mcp ships), not from the clock. The
+  dashboard's turnus bar shows every block of the day and whether its results are in.
 - **History is reused, not re-scraped.** The match table has the same columns as
   esoccer-battle-mcp, so a quarter of a million results import in a few seconds.
 

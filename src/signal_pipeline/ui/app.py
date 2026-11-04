@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from importlib import resources
 
 from PySide6.QtCore import Qt, QTimer
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -33,9 +34,10 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__, features
-from ..battle_day import session_of, to_local
+from ..battle_day import session_of, to_local, today_battle_day
 from ..config import Settings
-from ..resolver import summarise
+from ..resolver import daily_stats, summarise
+from ..schedule import Schedule, _day_minutes, block_status
 from ..service import Pipeline
 from ..sinks.telegram import Routing
 from .lab import LabTab
@@ -46,10 +48,13 @@ from .widgets import (
     TAB_ACTIVE,
     TAB_INACTIVE,
     ContentView,
+    LastDayCard,
     MiniCard,
+    MiniChart,
     Sidebar,
     SignalCard,
     StatusCard,
+    TurnusBar,
     card_title,
 )
 
@@ -98,9 +103,13 @@ def _pick(row) -> str:
 
 
 class DashboardView(ContentView):
+    """Same layout as the original dashboard: system status on the left; performance chips,
+    mini cards, previous day and the 7-day chart on the right; today's turnuses at the bottom."""
+
     def __init__(self, p: Pipeline):
         super().__init__("Dashboard")
         self.p = p
+        self.selected: str | None = None  # None = all strategies
         version = QLabel(f"v{__version__}")
         version.setFont(QFont("Segoe UI", 10))
         version.setStyleSheet("color: #ffffff;")
@@ -143,31 +152,81 @@ class DashboardView(ContentView):
 
         right = QVBoxLayout()
         right.setSpacing(10)
-        right.addWidget(card_title("Teljesítmény — utolsó 24 óra"))
-        grid = QGridLayout()
-        grid.setSpacing(10)
-        self.mini = {
-            "signals": MiniCard("Jelzés"),
-            "won": MiniCard("Nyertes", color=GREEN),
-            "lost": MiniCard("Vesztes", color=RED),
-            "pending": MiniCard("Folyamatban", color="#f2cc0c"),
-            "hit": MiniCard("Találati arány"),
-            "units": MiniCard("Egység"),
-        }
-        for i, card in enumerate(self.mini.values()):
-            grid.addWidget(card, i // 3, i % 3)
-        right.addLayout(grid)
-        right.addWidget(card_title("Stratégiák"))
-        self.table = _table(["Stratégia", "Jelzés", "Ny–V–P", "Folyamatban", "Találati arány", "Egység"])
-        right.addWidget(self.table, 1)
-        top.addLayout(right, 5)
+        strat_row = QHBoxLayout()
+        strat_row.setSpacing(8)
+        strat_row.addWidget(card_title("Teljesítmény"))
+        self.chip_frame = QFrame()
+        self.chip_frame.setStyleSheet("QFrame{background:#212121;border-radius:8px;}")
+        self.chips = QHBoxLayout(self.chip_frame)
+        self.chips.setContentsMargins(6, 4, 6, 4)
+        self.chips.setSpacing(4)
+        strat_row.addStretch()
+        strat_row.addWidget(self.chip_frame)
+        right.addLayout(strat_row)
+        self._chip_btns: dict[str | None, QPushButton] = {}
+        self._chip_ids: tuple = ()
+
+        mini = QHBoxLayout()
+        mini.setSpacing(10)
+        self.mc_units = MiniCard("Egységek", "–", "#FDB900")
+        self.mc_roi = MiniCard("ROI", "–", "#888888")
+        self.mc_won = MiniCard("Nyert", "–", GREEN)
+        self.mc_total = MiniCard("Összes", "–", "#888888")
+        for mc in (self.mc_units, self.mc_roi, self.mc_won, self.mc_total):
+            mini.addWidget(mc)
+        right.addLayout(mini)
+        self.last_day = LastDayCard()
+        right.addWidget(self.last_day)
+        self.chart = MiniChart()
+        right.addWidget(self.chart)
+        right.addStretch()
+        top.addLayout(right, 4)
         self.root.addLayout(top, 1)
+
+        self.turnus = TurnusBar()
+        self.root.addWidget(self.turnus)
+
+    # -- strategy chips ------------------------------------------------------------------
+
+    def _rebuild_chips(self) -> None:
+        ids = tuple(s.id for s in self.p.loaded.strategies)
+        if ids == self._chip_ids:
+            return
+        self._chip_ids = ids
+        while self.chips.count():
+            w = self.chips.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        self._chip_btns = {}
+        for sid, label in [(None, "Összes")] + [(s.id, s.name) for s in self.p.loaded.strategies]:
+            btn = QPushButton(label.upper())
+            btn.setFixedHeight(26)
+            btn.setFont(QFont("Segoe UI", 11))
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, k=sid: self._select(k))
+            self.chips.addWidget(btn)
+            self._chip_btns[sid] = btn
+        if self.selected not in self._chip_btns:
+            self.selected = None
+        self._style_chips()
+
+    def _style_chips(self) -> None:
+        for sid, btn in self._chip_btns.items():
+            btn.setStyleSheet(TAB_ACTIVE if sid == self.selected else TAB_INACTIVE)
+
+    def _select(self, sid: str | None) -> None:
+        self.selected = sid
+        self._style_chips()
+        self.refresh()
 
     def _toggle(self, _name: str) -> None:
         self.p.stop() if self.p.running else self.p.start()
         self.refresh()
 
+    # -- refresh -------------------------------------------------------------------------
+
     def refresh(self) -> None:
+        self._rebuild_chips()
         last = self.p.last_cycle
         self.cards["pipeline"].update_status(
             "running" if self.p.running else "stopped",
@@ -176,32 +235,26 @@ class DashboardView(ContentView):
         for check in self.p.health():
             if check.name in self.cards:
                 self.cards[check.name].update_status(check.level, check.message)
-        since = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+
+        ids = {self.selected} if self.selected else None
+        today = today_battle_day()
         with self.p.lock:
-            day = summarise(self.p.conn, since_utc=since)
-            all_time = summarise(self.p.conn)
-        won, lost = sum(s.won for s in day), sum(s.lost for s in day)
-        units = sum(s.units for s in day)
-        self.mini["signals"].set_value(str(sum(s.signals for s in day)))
-        self.mini["won"].set_value(str(won))
-        self.mini["lost"].set_value(str(lost))
-        self.mini["pending"].set_value(str(sum(s.pending for s in day)))
-        self.mini["hit"].set_value(f"{won / (won + lost):.0%}" if won + lost else "–")
-        self.mini["units"].set_value(f"{units:+.2f}", GREEN if units > 0 else RED if units < 0 else "#d9d9d9")
-        _fill(
-            self.table,
-            [
-                [
-                    s.strategy_id,
-                    s.signals,
-                    f"{s.won}–{s.lost}–{s.push}",
-                    s.pending,
-                    f"{s.hit_rate:.1%}" if s.hit_rate is not None else "—",
-                    f"{s.units:+.2f}",
-                ]
-                for s in all_time
-            ],
-        )
+            rows = [s for s in summarise(self.p.conn) if ids is None or s.strategy_id in ids]
+            daily = daily_stats(self.p.conn, ids)
+            status = block_status(self.p.conn, today, _day_minutes(datetime.now().strftime("%H:%M")))
+        units = sum(s.units for s in rows)
+        won, lost = sum(s.won for s in rows), sum(s.lost for s in rows)
+        roi = 100.0 * units / (won + lost) if won + lost else 0.0
+        self.mc_units.set_value(f"{units:+.2f}", "#FDB900" if units >= 0 else RED)
+        self.mc_roi.set_value(f"{roi:+.2f}%", "#FDB900" if roi >= 0 else RED)
+        self.mc_won.set_value(str(won))
+        self.mc_total.set_value(str(sum(s.signals for s in rows)))
+
+        yesterday = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
+        self.last_day.update_stats(yesterday, daily.get(yesterday))
+        days = [(date.fromisoformat(today) - timedelta(days=6 - i)).isoformat() for i in range(7)]
+        self.chart.draw([(d, daily.get(d, {}).get("all", {}).get("units", 0.0)) for d in days])
+        self.turnus.update_blocks(today, Schedule.bundled().blocks(today), status)
 
 
 class FeedView(ContentView):

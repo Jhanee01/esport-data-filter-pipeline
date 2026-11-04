@@ -457,3 +457,297 @@ class SignalCard(QFrame):
             r.setFont(QFont("Segoe UI", 10))
             r.setStyleSheet("color: #6e7079;")
             lay.addWidget(r)
+
+
+SESSION_COLUMNS = (("day", "DAY"), ("afternoon", "AFTERNOON"), ("night", "NIGHT"))
+
+
+class LastDayCard(QFrame):
+    """The previous Battle day per session, like the original "ELŐZŐ NAP" card."""
+
+    ROWS = (
+        ("total", "Összes tipp"),
+        ("won", "Nyert"),
+        ("lost", "Vesztett"),
+        ("units", "Profit (egység)"),
+        ("roi", "ROI"),
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("card")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 10, 14, 10)
+        root.setSpacing(5)
+        hdr = QHBoxLayout()
+        self.date_lbl = QLabel("ELŐZŐ NAP")
+        self.date_lbl.setObjectName("cardTitle")
+        self.date_lbl.setFont(QFont("Segoe UI Semibold", 10))
+        hdr.addWidget(self.date_lbl)
+        hdr.addStretch()
+        for _, text in SESSION_COLUMNS:
+            col = QLabel(text)
+            col.setFont(QFont("Segoe UI Semibold", 10))
+            col.setStyleSheet(f"color: {ACCENT};")
+            col.setFixedWidth(84)
+            col.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            hdr.addWidget(col)
+        root.addLayout(hdr)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("background: #2a2d3a; border: none; max-height: 1px;")
+        root.addWidget(sep)
+        self.vals: dict[str, list[QLabel]] = {}
+        for key, label in self.ROWS:
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            lbl = QLabel(label)
+            lbl.setFont(QFont("Segoe UI", 11))
+            lbl.setStyleSheet("color: #ffffff;")
+            row.addWidget(lbl)
+            row.addStretch()
+            cells = []
+            for _ in SESSION_COLUMNS:
+                v = QLabel("–")
+                v.setFont(QFont("Segoe UI Semibold", 11))
+                v.setFixedWidth(84)
+                v.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                row.addWidget(v)
+                cells.append(v)
+            root.addLayout(row)
+            self.vals[key] = cells
+
+    def update_stats(self, day: str | None, buckets: dict | None) -> None:
+        if not day or not buckets:
+            self.date_lbl.setText("ELŐZŐ NAP — nincs adat")
+            for cells in self.vals.values():
+                for c in cells:
+                    c.setText("–")
+                    c.setStyleSheet("color: #555;")
+            return
+        self.date_lbl.setText(f"ELŐZŐ NAP  ·  {day}")
+        for col, (session, _) in enumerate(SESSION_COLUMNS):
+            s = buckets.get(session)
+            for key, cells in self.vals.items():
+                cell = cells[col]
+                cell.setStyleSheet("color: #ffffff;")
+                if not s or not s["total"]:
+                    cell.setText("–")
+                elif key == "units":
+                    cell.setText(f"{s['units']:+.2f}")
+                elif key == "roi":
+                    cell.setText(f"{s['roi']:+.1f}%")
+                else:
+                    cell.setText(str(s[key]))
+
+
+class MiniChart(QLabel):
+    """Daily profit bars + cumulative dashed line, rendered with matplotlib's Agg backend into
+    a QLabel (no native window), exactly like the original dashboard. Optional: without
+    matplotlib the label just stays empty."""
+
+    BG = "#12121f"
+
+    def __init__(self):
+        super().__init__()
+        self.setMinimumHeight(130)
+        self.setMaximumHeight(170)
+        self.setScaledContents(True)
+        self.setStyleSheet(f"background: {self.BG}; border-radius: 4px;")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        try:
+            from matplotlib.backends.backend_agg import FigureCanvasAgg
+            from matplotlib.figure import Figure
+        except ImportError:
+            self.fig = None
+            return
+        self.fig = Figure(figsize=(8, 2), dpi=100, facecolor=self.BG, tight_layout=True)
+        self.ax = self.fig.add_subplot(111)
+        self.canvas = FigureCanvasAgg(self.fig)
+
+    def draw(self, days: list[tuple[str, float]]) -> None:
+        if self.fig is None:
+            return
+        ax = self.ax
+        ax.clear()
+        ax.set_facecolor(self.BG)
+        y = [v for _, v in days]
+        x = list(range(len(y)))
+        cumul, run = [], 0.0
+        for v in y:
+            run += v
+            cumul.append(run)
+        for i, v in enumerate(y):
+            c = "#2ecc71" if v >= 0 else "#e74c3c"
+            ax.bar(i, v, color=c, width=0.62, alpha=0.9, zorder=3)
+            ax.bar(i, v, color=c, width=0.78, alpha=0.12, zorder=2)
+        ax.plot(
+            x,
+            cumul,
+            color=ACCENT,
+            linewidth=1.8,
+            linestyle="--",
+            alpha=0.85,
+            zorder=4,
+            marker="o",
+            markersize=3,
+            markerfacecolor=ACCENT,
+        )
+        ax.axhline(0, color="#333344", linewidth=0.8, zorder=1)
+        ax.set_xticks(x)
+        ax.set_xticklabels([d[5:] for d, _ in days], color="#555566", fontsize=7, rotation=45, ha="right")
+        ax.tick_params(axis="y", colors="#555566", labelsize=7)
+        ax.grid(axis="y", color="#ffffff06", linewidth=0.5)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_xlim(-0.6, max(len(y), 1) - 0.4)
+        self.canvas.draw()
+        buf = self.canvas.buffer_rgba()
+        w, h = self.canvas.get_width_height()
+        self.setPixmap(QPixmap.fromImage(QImage(bytes(buf), w, h, QImage.Format.Format_RGBA8888)))
+
+
+SESSION_COLORS = {"day": "#6ec532", "afternoon": "#FDB900", "night": "#4ab8c4"}
+# fixed marker order inside a turnus, as on the original bar: latest league first, then S/O/W
+VENUE_ORDER = {"L": 0, "B": 1, "S": 2, "O": 3, "W": 4, "A": 5, "E": 6}
+
+
+def _dot_style(state: str, session: str, radius: int) -> str:
+    col = SESSION_COLORS.get(session, "#6e7079")
+    if state == "done":
+        return f"background-color: #0a1e0a; color: {col}; border-radius: {radius}px; border: 1px solid {col};"
+    if state == "overdue":
+        return (
+            f"background-color: #2a0a0a; color: #e05555; border-radius: {radius}px; "
+            "border: 1px solid #c03030;"
+        )
+    if state == "running":
+        return (
+            f"background-color: #111811; color: {col}; border-radius: {radius}px; "
+            "border: 1px dashed " + col + ";"
+        )
+    return f"background-color: #111811; color: #3a5a3a; border-radius: {radius}px; border: 1px solid #1e301e;"
+
+
+class TurnusBar(QFrame):
+    """Today's blocks per turnus, as in the original "TURNUSOK" bar: 8-minute turnuses with one
+    small marker per venue, 12-minute turnuses as boxes, coloured by session and state."""
+
+    STATE_HU = {
+        "done": "kész",
+        "running": "folyamatban",
+        "overdue": "késik / nincs eredmény",
+        "pending": "hátravan",
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("card")
+        self.outer = QVBoxLayout(self)
+        self.outer.setContentsMargins(16, 12, 16, 12)
+        self.outer.setSpacing(8)
+        self.title_lbl = card_title("Turnusok")
+        self.outer.addWidget(self.title_lbl)
+        self.body = QHBoxLayout()
+        self.body.setSpacing(5)
+        self.outer.addLayout(self.body)
+        leg = QHBoxLayout()
+        for sess, label in (("day", "Day"), ("afternoon", "Afternoon"), ("night", "Night")):
+            d = QLabel("●")
+            d.setStyleSheet(f"color: {SESSION_COLORS[sess]}; font-size: 13px;")
+            t = QLabel(label)
+            t.setObjectName("cardTitle")
+            t.setFont(QFont("Segoe UI", 10))
+            leg.addWidget(d)
+            leg.addWidget(t)
+            leg.addSpacing(14)
+        leg.addStretch()
+        self.outer.addLayout(leg)
+        self._key = None
+        self._dots: dict[tuple[str, int], QLabel] = {}
+
+    def _clear(self) -> None:
+        def wipe(layout):
+            while layout.count():
+                item = layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+                elif item.layout():
+                    wipe(item.layout())
+
+        wipe(self.body)
+        self._dots = {}
+
+    def _build(self, blocks) -> None:
+        self._clear()
+        for fmt, label in (("8min", "Battle 8min"), ("12min", "Battle 12min")):
+            fblocks = [b for b in blocks if b.format == fmt]
+            if not fblocks:
+                continue
+            if fmt == "12min":
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.VLine)
+                sep.setFixedWidth(1)
+                sep.setStyleSheet("background: #2a2d3a; border: none;")
+                self.body.addSpacing(12)
+                self.body.addWidget(sep)
+                self.body.addSpacing(12)
+            box = QVBoxLayout()
+            box.setSpacing(3)
+            name = QLabel(label)
+            name.setFont(QFont("Segoe UI Semibold", 10))
+            name.setStyleSheet("color: #ffffff;")
+            box.addWidget(name, 0, Qt.AlignmentFlag.AlignLeft)
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            for turnus in sorted({b.turnus for b in fblocks}):
+                tb = sorted(
+                    (b for b in fblocks if b.turnus == turnus), key=lambda b: VENUE_ORDER.get(b.abbr, 9)
+                )
+                if fmt == "12min":
+                    dot = QLabel(f"T{turnus}")
+                    dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    dot.setFixedSize(30, 26)
+                    dot.setFont(QFont("Segoe UI Semibold", 10))
+                    for b in tb:
+                        self._dots[(b.venue, b.turnus)] = dot
+                    row.addWidget(dot)
+                    continue
+                col = QVBoxLayout()
+                col.setSpacing(2)
+                t = QLabel(f"T{turnus}")
+                t.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                t.setFont(QFont("Segoe UI Semibold", 8))
+                t.setStyleSheet("color: #8a8d99;")
+                col.addWidget(t)
+                vrow = QHBoxLayout()
+                vrow.setSpacing(2)
+                for b in tb:
+                    vd = QLabel(b.abbr)
+                    vd.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    vd.setFixedSize(16, 18)
+                    vd.setFont(QFont("Segoe UI Semibold", 8))
+                    self._dots[(b.venue, b.turnus)] = vd
+                    vrow.addWidget(vd)
+                col.addLayout(vrow)
+                row.addLayout(col)
+                row.addSpacing(4)
+            row.addStretch()
+            box.addLayout(row)
+            self.body.addLayout(box)
+        self.body.addStretch()
+
+    def update_blocks(self, day: str, blocks, status: dict) -> None:
+        key = (day, tuple((b.venue, b.turnus) for b in blocks))
+        if key != self._key:
+            self._build(blocks)
+            self._key = key
+        self.title_lbl.setText(f"TURNUSOK — {day}")
+        for b in blocks:
+            w = self._dots.get((b.venue, b.turnus))
+            if w is None:
+                continue
+            state = status.get((b.venue, b.turnus), "pending")
+            w.setStyleSheet(_dot_style(state, b.session, 4 if b.format == "12min" else 3))
+            w.setToolTip(f"T{b.turnus} · {b.venue} ({b.session}) · kezdés {b.start}\n{self.STATE_HU[state]}")

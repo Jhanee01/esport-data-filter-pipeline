@@ -17,6 +17,7 @@ import urllib.request
 from datetime import UTC, date, datetime, timedelta
 
 from ..battle_day import battle_day, session_of, to_local
+from ..schedule import Schedule
 from ..store import now_utc, upsert_matches
 
 log = logging.getLogger(__name__)
@@ -85,8 +86,12 @@ def parse_tournament(
 ) -> tuple[list[dict], list[dict]]:
     """Split a tournament's matches into (finished results, upcoming fixtures)."""
     venue = t["location"]["token"]
-    fmt = VENUE_FORMATS.get(venue)
-    day = battle_day(to_local(t["start_date"]), t.get("token_international"))
+    sched = Schedule.bundled()
+    fmt = sched.format_of(venue) or VENUE_FORMATS.get(venue)
+    start_local = to_local(t["start_date"])
+    day = battle_day(start_local, t.get("token_international"))
+    # turnus and session come from the block schedule, like in the original tool
+    turnus, block_session = sched.classify(venue, day, start_local.strftime("%H:%M"))
     results, fixtures = [], []
     for m in matches:
         if not _valid(m):
@@ -105,7 +110,7 @@ def parse_tournament(
             "local_time": local.strftime("%H:%M"),
             "venue": venue,
             "format": fmt,
-            "session": session_of(local.strftime("%H:%M"), sessions),
+            "session": block_session or session_of(local.strftime("%H:%M"), sessions),
             "player1": p1["nickname"],
             "team1": (p1.get("team") or {}).get("token_international"),
             "player2": p2["nickname"],
@@ -119,7 +124,7 @@ def parse_tournament(
             results.append(
                 {
                     **row,
-                    "turnus": None,
+                    "turnus": turnus,
                     "score1": p1["score"],
                     "score2": p2["score"],
                     "corners1": p1.get("cornerScore"),
