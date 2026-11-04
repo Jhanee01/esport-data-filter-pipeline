@@ -55,6 +55,8 @@ Strategies come from two places and run side by side:
 
 ![Strategy Lab](docs/strategy-lab.png)
 
+![Signals](docs/tips.png)
+
 See [docs/writing-strategies.md](docs/writing-strategies.md) for the rule format, the plugin
 interface and the list of features.
 

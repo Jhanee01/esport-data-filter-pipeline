@@ -267,3 +267,17 @@ def test_load_source_rejects_bad_spec():
     with pytest.raises(ValueError):
         load_source("no_colon_here")
     assert isinstance(load_source("signal_pipeline.odds.demo:DemoOddsSource"), DemoOddsSource)
+
+
+def test_unrouted_signal_stays_local(seeded):
+    sink = TelegramSink("token", Routing(), post=lambda u, d: pytest.fail("should not send"))
+    run_cycle(
+        seeded,
+        FixedSource([offer()]),
+        [RuleStrategy(rule())],
+        sink,
+        DEFAULT_SESSIONS,
+        now=KICKOFF - timedelta(hours=1),
+    )
+    row = seeded.execute("SELECT sent_at, send_error FROM signals").fetchone()
+    assert row["sent_at"] is None and row["send_error"] is None

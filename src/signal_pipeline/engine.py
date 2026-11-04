@@ -130,7 +130,8 @@ def run_cycle(
             if signal_id is None:
                 continue  # already signalled earlier
             report.new_signals.append(signal_id)
-            if sink is not None:
+            # unrouted signals are only recorded locally: sent_at stays empty
+            if sink is not None and sink.routing.chat_for(strategy.id, session):
                 text = format_signal(
                     strategy.name,
                     offer.as_dict(),

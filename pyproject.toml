@@ -13,7 +13,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-ui = ["PySide6>=6.6"]
+ui = ["PySide6>=6.6", "qt-material>=2.14"]
 remote = ["fastapi>=0.110", "uvicorn>=0.29"]
 dev = ["pytest>=8", "ruff>=0.6"]
 
@@ -24,7 +24,7 @@ signal-pipeline = "signal_pipeline.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-signal_pipeline = ["remote/static/*.html"]
+signal_pipeline = ["remote/static/*.html", "ui/theme_fdb900.xml", "ui/assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -37,7 +37,7 @@ def test_remote_requires_token(pipeline):
 
 def test_pipeline_cycle_with_demo_source(pipeline):
     report = pipeline.cycle()
-    assert report.offers > 0 and report.new_signals == []   # no strategies loaded
+    assert report.offers > 0 and report.new_signals == []  # no strategies loaded
 
 
 def test_dashboard_builds(pipeline):
