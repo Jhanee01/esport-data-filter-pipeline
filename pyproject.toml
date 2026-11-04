@@ -13,7 +13,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-ui = ["PySide6>=6.6", "qt-material>=2.14"]
+ui = ["PySide6>=6.6", "qt-material>=2.14", "numpy>=1.26", "matplotlib>=3.8"]
 remote = ["fastapi>=0.110", "uvicorn>=0.29"]
 dev = ["pytest>=8", "ruff>=0.6"]
 
@@ -37,3 +37,9 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
+
+# Views taken over verbatim from the original dashboard: only check them for real errors,
+# not for style, so they stay as close to the original as possible.
+[tool.ruff.lint.per-file-ignores]
+"src/signal_pipeline/ui/{sidebar,dashboard_view,tips_view,stats_view,feed_view,log_view,toast}.py" = ["E", "W", "I", "B", "UP", "F841"]
+"src/signal_pipeline/ui/compat/stats_manager.py" = ["E", "W", "I", "B", "UP"]

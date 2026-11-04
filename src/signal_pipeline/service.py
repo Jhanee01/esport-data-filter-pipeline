@@ -19,7 +19,9 @@ from .sinks.telegram import Routing, TelegramSink
 from .store import connect
 from .strategies.loader import LoadResult, load_all
 
-log = logging.getLogger("signal_pipeline")
+log = logging.getLogger("signal_pipeline.engine")
+log_collect = logging.getLogger("signal_pipeline.collectors")
+log_resolve = logging.getLogger("signal_pipeline.resolver")
 
 COLLECT_EVERY_S = 10 * 60
 RESOLVE_EVERY_S = 5 * 60
@@ -73,7 +75,7 @@ class Pipeline:
         for day in days_back(today_battle_day(), days):
             with self.lock:
                 stats = battle_api.collect_day(self.conn, day, self.settings.sessions)
-            log.info(
+            log_collect.info(
                 "collected %s: %d results, %d fixtures, %d errors",
                 day,
                 stats["results"],
@@ -99,7 +101,7 @@ class Pipeline:
         with self.lock:
             counts = resolver.resolve_pending(self.conn)
         if any(v for k, v in counts.items() if k != "waiting"):
-            log.info("resolved: %s", counts)
+            log_resolve.info("resolved: %s", counts)
         return counts
 
     def health(self) -> list[health.Check]:

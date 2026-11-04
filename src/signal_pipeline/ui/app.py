@@ -1,16 +1,20 @@
-"""Desktop dashboard (PySide6), in the look of the original tool: qt-material dark theme with
-the #FDB900 accent, a sidebar on the left and the views stacked on the right. Hungarian UI."""
+"""Desktop dashboard: the original tool's window and views on top of the pipeline.
+
+The sidebar, Dashboard, Élő Feed, Tippek, Statisztika and Konzol views are the original
+dashboard's code; they read their data through `ui.compat`, which serves the pipeline's
+database in the shapes those views expect. The Strategy Lab and the H2H search are new
+views in the same style.
+"""
 
 from __future__ import annotations
 
-import json
+import logging
 import sys
 import threading
-from datetime import UTC, date, datetime, timedelta
 from importlib import resources
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -23,7 +27,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QStackedWidget,
@@ -33,50 +36,30 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__, features
-from ..battle_day import session_of, to_local, today_battle_day
+from .. import features
 from ..config import Settings
-from ..resolver import daily_stats, summarise
-from ..schedule import Schedule, _day_minutes, block_status
 from ..service import Pipeline
 from ..sinks.telegram import Routing
-from .lab import LabTab
-from .widgets import (
-    LOG_PANE,
-    OUTLINE_BTN,
-    SCROLL_QSS,
-    TAB_ACTIVE,
-    TAB_INACTIVE,
-    ContentView,
-    LastDayCard,
-    MiniCard,
-    MiniChart,
-    Sidebar,
-    SignalCard,
-    StatusCard,
-    TurnusBar,
-    card_title,
-)
+from .compat import runtime
 
-NAV = ["Dashboard", "Élő Feed", "Stratégia Labor", "Tippek", "Statisztika", "H2H Kereső", "Konzol"]
+# Log record → console tab (see log_view.PROCESS_TABS); the first matching prefix wins
+LOG_TABS = (
+    ("signal_pipeline.collectors", "collector"),
+    ("signal_pipeline.odds", "odds"),
+    ("signal_pipeline.resolver", "resolver"),
+    ("signal_pipeline.sinks", "telegram"),
+    ("signal_pipeline.remote", "remote"),
+    ("signal_pipeline", "engine"),
+)
+# health check level → state of the dashboard status card
+CARD_STATE = {"ok": "running", "warn": "error", "fail": "error"}
 GREEN, RED = "#3ba560", "#d44a3a"
-MARKET_HU = {"ou": "Gólszám", "1x2": "Kimenetel", "btts": "BTTS"}
-PICK_HU = {
-    "over": "Over",
-    "under": "Under",
-    "home": "Hazai",
-    "draw": "Döntetlen",
-    "away": "Vendég",
-    "yes": "Igen",
-    "no": "Nem",
-}
 
 
 def _table(headers: list[str]) -> QTableWidget:
     t = QTableWidget(0, len(headers))
     t.setHorizontalHeaderLabels([h.upper() for h in headers])
     t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-    # qt-material pads header sections generously; keep the labels from being clipped
     t.horizontalHeader().setStyleSheet("QHeaderView::section{padding:4px 6px;font-size:11px;}")
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.setAlternatingRowColors(True)
@@ -84,368 +67,48 @@ def _table(headers: list[str]) -> QTableWidget:
     return t
 
 
-def _fill(table: QTableWidget, rows: list[list], colors: dict[int, str] | None = None) -> None:
+def _fill(table: QTableWidget, rows: list[list]) -> None:
     table.setRowCount(len(rows))
     for r, row in enumerate(rows):
         for c, value in enumerate(row):
-            item = QTableWidgetItem("" if value is None else str(value))
-            if colors and c in colors and value not in (None, ""):
-                item.setForeground(QColor(colors[c]))
-            table.setItem(r, c, item)
+            table.setItem(r, c, QTableWidgetItem("" if value is None else str(value)))
 
 
-def _pick(row) -> str:
-    line = f" {row['line']:g}" if row["line"] is not None else ""
-    return f"{MARKET_HU.get(row['market'], row['market'])} · {PICK_HU.get(row['pick'], row['pick'])}{line}"
+class _Page(QWidget):
+    """A view with the original layout: 24 px margins and a 16 pt title."""
+
+    def __init__(self, title: str):
+        super().__init__()
+        self.setObjectName("contentView")
+        self.root = QVBoxLayout(self)
+        self.root.setContentsMargins(24, 24, 24, 24)
+        self.root.setSpacing(14)
+        lbl = QLabel(title)
+        lbl.setObjectName("viewTitle")
+        lbl.setFont(QFont("Segoe UI Semibold", 16))
+        self.root.addWidget(lbl)
 
 
-# ── views ──────────────────────────────────────────────────────────────────────────────
-
-
-class DashboardView(ContentView):
-    """Same layout as the original dashboard: system status on the left; performance chips,
-    mini cards, previous day and the 7-day chart on the right; today's turnuses at the bottom."""
-
-    def __init__(self, p: Pipeline):
-        super().__init__("Dashboard")
-        self.p = p
-        self.selected: str | None = None  # None = all strategies
-        version = QLabel(f"v{__version__}")
-        version.setFont(QFont("Segoe UI", 10))
-        version.setStyleSheet("color: #ffffff;")
-        self.collect_btn = QPushButton("Eredmények frissítése")
-        self.collect_btn.setFixedHeight(28)
-        self.collect_btn.setStyleSheet(OUTLINE_BTN)
-        self.collect_btn.clicked.connect(lambda: threading.Thread(target=self.p.collect, daemon=True).start())
-        self.title_row.addWidget(version)
-        self.title_row.addWidget(self.collect_btn)
-
-        top = QHBoxLayout()
-        top.setSpacing(14)
-        status_col = QVBoxLayout()
-        status_col.setSpacing(8)
-        status_col.addWidget(card_title("Rendszer státusz"))
-        self.cards = {
-            "pipeline": StatusCard("pipeline", "Jelzés-motor", toggleable=True),
-            "results": StatusCard("results", "Battle gyűjtő"),
-            "odds": StatusCard("odds", "Odds-forrás"),
-            "strategies": StatusCard("strategies", "Stratégiák"),
-            "telegram": StatusCard("telegram", "Telegram"),
-        }
-        self.cards["pipeline"].toggle_clicked.connect(self._toggle)
-        inner = QWidget()
-        inner.setObjectName("transparentWidget")
-        il = QVBoxLayout(inner)
-        il.setContentsMargins(0, 0, 4, 0)
-        il.setSpacing(8)
-        for card in self.cards.values():
-            il.addWidget(card)
-        il.addStretch()
-        scroll = QScrollArea()
-        scroll.setWidget(inner)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(252)
-        scroll.setStyleSheet(SCROLL_QSS)
-        status_col.addWidget(scroll)
-        top.addLayout(status_col, 3)
-
-        right = QVBoxLayout()
-        right.setSpacing(10)
-        strat_row = QHBoxLayout()
-        strat_row.setSpacing(8)
-        strat_row.addWidget(card_title("Teljesítmény"))
-        self.chip_frame = QFrame()
-        self.chip_frame.setStyleSheet("QFrame{background:#212121;border-radius:8px;}")
-        self.chips = QHBoxLayout(self.chip_frame)
-        self.chips.setContentsMargins(6, 4, 6, 4)
-        self.chips.setSpacing(4)
-        strat_row.addStretch()
-        strat_row.addWidget(self.chip_frame)
-        right.addLayout(strat_row)
-        self._chip_btns: dict[str | None, QPushButton] = {}
-        self._chip_ids: tuple = ()
-
-        mini = QHBoxLayout()
-        mini.setSpacing(10)
-        self.mc_units = MiniCard("Egységek", "–", "#FDB900")
-        self.mc_roi = MiniCard("ROI", "–", "#888888")
-        self.mc_won = MiniCard("Nyert", "–", GREEN)
-        self.mc_total = MiniCard("Összes", "–", "#888888")
-        for mc in (self.mc_units, self.mc_roi, self.mc_won, self.mc_total):
-            mini.addWidget(mc)
-        right.addLayout(mini)
-        self.last_day = LastDayCard()
-        right.addWidget(self.last_day)
-        self.chart = MiniChart()
-        right.addWidget(self.chart, 1)  # the chart takes the free height, like the original
-        top.addLayout(right, 4)
-        self.root.addLayout(top, 1)
-
-        self.turnus = TurnusBar()
-        self.root.addWidget(self.turnus)
-
-    # -- strategy chips ------------------------------------------------------------------
-
-    def _rebuild_chips(self) -> None:
-        ids = tuple(s.id for s in self.p.loaded.strategies)
-        if ids == self._chip_ids:
-            return
-        self._chip_ids = ids
-        while self.chips.count():
-            w = self.chips.takeAt(0).widget()
-            if w:
-                w.deleteLater()
-        self._chip_btns = {}
-        for sid, label in [(None, "Összes")] + [(s.id, s.name) for s in self.p.loaded.strategies]:
-            btn = QPushButton(label.upper())
-            btn.setFixedHeight(26)
-            btn.setFont(QFont("Segoe UI", 11))
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda _=False, k=sid: self._select(k))
-            self.chips.addWidget(btn)
-            self._chip_btns[sid] = btn
-        if self.selected not in self._chip_btns:
-            self.selected = None
-        self._style_chips()
-
-    def _style_chips(self) -> None:
-        for sid, btn in self._chip_btns.items():
-            btn.setStyleSheet(TAB_ACTIVE if sid == self.selected else TAB_INACTIVE)
-
-    def _select(self, sid: str | None) -> None:
-        self.selected = sid
-        self._style_chips()
-        self.refresh()
-
-    def _toggle(self, _name: str) -> None:
-        self.p.stop() if self.p.running else self.p.start()
-        self.refresh()
-
-    # -- refresh -------------------------------------------------------------------------
-
-    def refresh(self) -> None:
-        self._rebuild_chips()
-        last = self.p.last_cycle
-        self.cards["pipeline"].update_status(
-            "running" if self.p.running else "stopped",
-            (f"Utolsó kör: {last.offers} ajánlat, {len(last.new_signals)} új jelzés" if last else "Nem fut"),
-        )
-        for check in self.p.health():
-            if check.name in self.cards:
-                self.cards[check.name].update_status(check.level, check.message)
-
-        ids = {self.selected} if self.selected else None
-        today = today_battle_day()
-        with self.p.lock:
-            rows = [s for s in summarise(self.p.conn) if ids is None or s.strategy_id in ids]
-            daily = daily_stats(self.p.conn, ids)
-            status = block_status(self.p.conn, today, _day_minutes(datetime.now().strftime("%H:%M")))
-        units = sum(s.units for s in rows)
-        won, lost = sum(s.won for s in rows), sum(s.lost for s in rows)
-        roi = 100.0 * units / (won + lost) if won + lost else 0.0
-        self.mc_units.set_value(f"{units:+.2f}", "#FDB900" if units >= 0 else RED)
-        self.mc_roi.set_value(f"{roi:+.2f}%", "#FDB900" if roi >= 0 else RED)
-        self.mc_won.set_value(str(won))
-        self.mc_total.set_value(str(sum(s.signals for s in rows)))
-
-        yesterday = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
-        self.last_day.update_stats(yesterday, daily.get(yesterday))
-        days = [(date.fromisoformat(today) - timedelta(days=6 - i)).isoformat() for i in range(7)]
-        self.chart.draw([(d, daily.get(d, {}).get("all", {}).get("units", 0.0)) for d in days])
-        self.turnus.update_blocks(today, Schedule.bundled().blocks(today), status)
-
-
-class FeedView(ContentView):
-    """The open offers the odds source returned, soonest kick-offs first."""
-
-    def __init__(self, p: Pipeline):
-        super().__init__("Élő Feed")
-        self.p = p
-        self.count = QLabel("")
-        self.count.setStyleSheet("color: #8d8d9f; font-size: 12px;")
-        self.title_row.addWidget(self.count)
-        self.table = _table(["Kezdés", "Pálya", "Hazai", "Vendég", "Piac", "Odds", "Forrás"])
-        self.root.addWidget(self.table, 1)
-
-    def refresh(self) -> None:
-        now = datetime.now(UTC).isoformat()
-        with self.p.lock:
-            rows = self.p.conn.execute(
-                "SELECT * FROM offers WHERE kickoff_utc > ? ORDER BY kickoff_utc, player1, market, pick"
-                " LIMIT 400",
-                (now,),
-            ).fetchall()
-        self.count.setText(f"{len(rows)} nyitott ajánlat")
-        _fill(
-            self.table,
-            [
-                [
-                    to_local(r["kickoff_utc"]).strftime("%H:%M"),
-                    r["venue"],
-                    r["player1"],
-                    r["player2"],
-                    _pick(r),
-                    f"{r['odds']:.2f}",
-                    r["source"],
-                ]
-                for r in rows
-            ],
-        )
-
-
-class LabView(ContentView):
+class LabView(_Page):
     def __init__(self, p: Pipeline):
         super().__init__("Stratégia Labor")
+        from .lab import LabTab
+
         self.lab = LabTab(p)
-        self.root.addWidget(self.lab, 1)
-
-
-class TipsView(ContentView):
-    """Signals as cards, filterable like the original tips view."""
-
-    FILTERS = [("all", "Mind"), ("pending", "Folyamatban"), ("settled", "Lezárt")]
-
-    def __init__(self, p: Pipeline):
-        super().__init__("Tippek")
-        self.p = p
-        self.filter = "all"
-        self.count = QLabel("")
-        self.count.setStyleSheet("color: #8d8d9f; font-size: 12px;")
-        self.title_row.addWidget(self.count)
-        bar = QHBoxLayout()
-        bar.setSpacing(6)
-        self.tab_btns = {}
-        for key, label in self.FILTERS:
-            btn = QPushButton(label)
-            btn.setFixedHeight(30)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda _=False, k=key: self._set_filter(k))
-            bar.addWidget(btn)
-            self.tab_btns[key] = btn
-        bar.addStretch()
-        self.root.addLayout(bar)
-        self.cards = QWidget()
-        self.cards.setStyleSheet("background: transparent;")
-        self.cards_lay = QVBoxLayout(self.cards)
-        self.cards_lay.setSpacing(8)
-        self.cards_lay.setContentsMargins(0, 0, 4, 0)
+        # scrollable, so the lab's form never forces the whole window to its height
         scroll = QScrollArea()
-        scroll.setWidget(self.cards)
+        scroll.setWidget(self.lab)
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(SCROLL_QSS)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self.root.addWidget(scroll, 1)
-        self._last_key = None
-        self._set_filter("all")
-
-    def _set_filter(self, key: str) -> None:
-        self.filter = key
-        for k, btn in self.tab_btns.items():
-            btn.setStyleSheet(TAB_ACTIVE if k == key else TAB_INACTIVE)
-        self._last_key = None
-        self.refresh()
-
-    def refresh(self) -> None:
-        where = {"all": "", "pending": "WHERE status = 'pending'", "settled": "WHERE status != 'pending'"}[
-            self.filter
-        ]
-        with self.p.lock:
-            rows = self.p.conn.execute(
-                f"SELECT * FROM signals {where} ORDER BY kickoff_utc DESC LIMIT 150"
-            ).fetchall()
-        key = (self.filter, tuple((r["id"], r["status"]) for r in rows))
-        if key == self._last_key:
-            return  # nothing changed: don't rebuild the cards (keeps the scroll position)
-        self._last_key = key
-        while self.cards_lay.count():
-            w = self.cards_lay.takeAt(0).widget()
-            if w:
-                w.deleteLater()
-        for r in rows:
-            score = f"{r['score1']}–{r['score2']}" if r["score1"] is not None else "—"
-            reason = json.loads(r["details"] or "{}").get("reason", "")
-            self.cards_lay.addWidget(
-                SignalCard(
-                    f"{r['player1']}  vs  {r['player2']}",
-                    r["status"],
-                    [
-                        ("Kezdés", to_local(r["kickoff_utc"]).strftime("%m-%d %H:%M")),
-                        ("Tipp", _pick(r)),
-                        ("Odds", f"{r['odds']:.2f}" if r["odds"] else "—"),
-                        ("Eredmény", score),
-                        ("Küldve", "igen" if r["sent_at"] else "csak helyben"),
-                    ],
-                    r["strategy_id"],
-                    reason,
-                )
-            )
-        self.cards_lay.addStretch()
-        self.count.setText(f"{len(rows)} tipp")
 
 
-class StatsView(ContentView):
-    def __init__(self, p: Pipeline):
-        super().__init__("Statisztika")
-        self.p = p
-        grid = QGridLayout()
-        grid.setSpacing(10)
-        self.mini = {
-            "signals": MiniCard("Összes jelzés"),
-            "hit": MiniCard("Találati arány"),
-            "units": MiniCard("Egység (1 egységes tét)"),
-            "roi": MiniCard("ROI"),
-        }
-        for i, card in enumerate(self.mini.values()):
-            grid.addWidget(card, 0, i)
-        self.root.addLayout(grid)
-        self.root.addWidget(card_title("Stratégiánként"))
-        self.table = _table(
-            [
-                "Stratégia",
-                "Jelzés",
-                "Nyertes",
-                "Vesztes",
-                "Push",
-                "Érvénytelen",
-                "Találati arány",
-                "Egység",
-                "ROI",
-            ]
-        )
-        self.root.addWidget(self.table, 1)
-
-    def refresh(self) -> None:
-        with self.p.lock:
-            rows = summarise(self.p.conn)
-        won, lost = sum(s.won for s in rows), sum(s.lost for s in rows)
-        units = sum(s.units for s in rows)
-        self.mini["signals"].set_value(str(sum(s.signals for s in rows)))
-        self.mini["hit"].set_value(f"{won / (won + lost):.1%}" if won + lost else "–")
-        self.mini["units"].set_value(f"{units:+.2f}", GREEN if units > 0 else RED if units < 0 else None)
-        self.mini["roi"].set_value(f"{units / (won + lost):+.1%}" if won + lost else "–")
-        _fill(
-            self.table,
-            [
-                [
-                    s.strategy_id,
-                    s.signals,
-                    s.won,
-                    s.lost,
-                    s.push,
-                    s.void,
-                    f"{s.hit_rate:.1%}" if s.hit_rate is not None else "—",
-                    f"{s.units:+.2f}",
-                    f"{s.roi:+.1%}" if s.roi is not None else "—",
-                ]
-                for s in rows
-            ],
-            colors={2: GREEN, 3: RED},
-        )
-
-
-class H2HView(ContentView):
+class H2HView(_Page):
     def __init__(self, p: Pipeline):
         super().__init__("H2H Kereső")
+        from .dashboard_view import MiniCard
+
         self.p = p
         row = QHBoxLayout()
         self.a, self.b = QLineEdit(), QLineEdit()
@@ -465,8 +128,8 @@ class H2HView(ContentView):
             "goals": MiniCard("Gólátlag"),
             "over": MiniCard("Over 5.5"),
             "btts": MiniCard("BTTS"),
-            "p1": MiniCard("Hazai nyert", color=GREEN),
-            "p2": MiniCard("Vendég nyert", color=RED),
+            "p1": MiniCard("Hazai nyert", "–", GREEN),
+            "p2": MiniCard("Vendég nyert", "–", RED),
         }
         for i, card in enumerate(self.mini.values()):
             grid.addWidget(card, 0, i)
@@ -511,26 +174,6 @@ class H2HView(ContentView):
         )
 
 
-class ConsoleView(ContentView):
-    def __init__(self, p: Pipeline):
-        super().__init__("Konzol")
-        self.p = p
-        self.text = QPlainTextEdit()
-        self.text.setReadOnly(True)
-        self.text.setFont(QFont("Consolas", 10))
-        self.text.setStyleSheet(LOG_PANE)
-        self.text.setMaximumBlockCount(2000)
-        self.root.addWidget(self.text, 1)
-        self._shown = 0
-
-    def refresh(self) -> None:
-        lines = list(self.p.ring.lines)
-        if len(lines) != self._shown:
-            self.text.setPlainText("\n".join(lines))
-            self.text.verticalScrollBar().setValue(self.text.verticalScrollBar().maximum())
-            self._shown = len(lines)
-
-
 class RoutingDialog(QDialog):
     """Gear button: which Telegram chat each signal goes to. Empty = record locally only."""
 
@@ -558,7 +201,7 @@ class RoutingDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(hint)
         lay.addLayout(form)
-        lay.addWidget(card_title("Stratégiánként"))
+        lay.addWidget(QLabel("STRATÉGIÁNKÉNT"))
         lay.addWidget(self.by_strategy)
         lay.addWidget(save)
         r = Routing.load(p.settings.routing_path)
@@ -589,13 +232,33 @@ class RoutingDialog(QDialog):
         self.accept()
 
 
-# ── main window ────────────────────────────────────────────────────────────────────────
+class _LogBridge(QObject, logging.Handler):
+    """Log records → console tabs, delivered on the GUI thread through a Qt signal."""
+
+    line = Signal(str, str)
+
+    def __init__(self):
+        QObject.__init__(self)
+        logging.Handler.__init__(self)
+        self.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        tab = next((t for prefix, t in LOG_TABS if record.name.startswith(prefix)), "engine")
+        self.line.emit(tab, self.format(record))
 
 
 class MainWindow(QMainWindow):
     def __init__(self, p: Pipeline):
         super().__init__()
         self.p = p
+        runtime.PIPELINE = p  # the original views read through ui.compat
+        from .dashboard_view import DashboardView
+        from .feed_view import FeedView
+        from .log_view import LogView
+        from .sidebar import Sidebar
+        from .stats_view import StatsView
+        from .tips_view import TipsView
+
         self.setWindowTitle("Signal pipeline")
         self.resize(1440, 900)
         central = QWidget()
@@ -603,48 +266,86 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+
+        # same order as the original sidebar: Dashboard, Élő Feed, Stratégia Labor, Tippek,
+        # Statisztika, H2H Kereső, Konzol
+        self.dashboard_view = DashboardView()
+        self.labview = LabView(p)
+        self.log_view = LogView()
         self.views = [
-            DashboardView(p),
-            FeedView(p),
-            LabView(p),
-            TipsView(p),
-            StatsView(p),
+            self.dashboard_view,
+            FeedView(),
+            self.labview,
+            TipsView(),
+            StatsView(),
             H2HView(p),
-            ConsoleView(p),
+            self.log_view,
         ]
         self.stack = QStackedWidget()
         for view in self.views:
             self.stack.addWidget(view)
-        self.sidebar = Sidebar(NAV)
-        self.sidebar.nav_changed.connect(self._show)
+        self.sidebar = Sidebar()
+        self.sidebar.nav_changed.connect(self.stack.setCurrentIndex)
         self.sidebar.settings_requested.connect(lambda: RoutingDialog(self.p, self).exec())
         layout.addWidget(self.sidebar)
         layout.addWidget(self.stack, 1)
-        self.lab.changed.connect(self._strategies_changed)
+        self.stack.setCurrentIndex(0)
         self.sidebar.set_active(0)
+
+        # the dashboard's buttons drive the pipeline
+        d = self.dashboard_view
+        d.toggle_requested.connect(self._toggle)
+        d.restart_requested.connect(self._restart)
+        d.check_updates_requested.connect(self._collect_now)
+        d._update_btn.setText("Eredmények frissítése")
+        self.lab.changed.connect(self._strategies_changed)
+
+        self._bridge = _LogBridge()
+        self._bridge.line.connect(self.log_view.append_line)
+        logging.getLogger().addHandler(self._bridge)
+
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
+        self.timer.timeout.connect(self._refresh_status)
         self.timer.start(5000)
-        self.refresh()
+        self._refresh_status()
 
     @property
-    def lab(self) -> LabTab:
-        return self.views[2].lab
+    def lab(self):
+        return self.labview.lab
 
-    def _show(self, index: int) -> None:
-        self.stack.setCurrentIndex(index)
-        self.refresh()
+    def _toggle(self, name: str) -> None:
+        if name == "pipeline":
+            self.p.stop() if self.p.running else self.p.start()
+        self._refresh_status()
+
+    def _restart(self, name: str) -> None:
+        if name == "results":
+            self._collect_now()
+        elif name == "strategies":
+            self._strategies_changed()
+        self._refresh_status()
+
+    def _collect_now(self) -> None:
+        threading.Thread(target=self.p.collect, daemon=True).start()
 
     def _strategies_changed(self) -> None:
         self.p.reload_strategies()
         self.lab.refresh()
-        self.refresh()
+        self.dashboard_view.refresh_tabs()
+        self._refresh_status()
 
-    def refresh(self) -> None:
-        self.stack.currentWidget().refresh()
-        self.sidebar.set_session(session_of(datetime.now().strftime("%H:%M"), self.p.settings.sessions))
+    def _refresh_status(self) -> None:
+        last = self.p.last_cycle
+        self.dashboard_view.on_status_changed(
+            "pipeline",
+            "running" if self.p.running else "stopped",
+            f"Utolsó kör: {last.offers} ajánlat, {len(last.new_signals)} új jelzés" if last else "Nem fut",
+        )
+        for check in self.p.health():
+            self.dashboard_view.on_status_changed(check.name, CARD_STATE[check.level], check.message)
 
     def closeEvent(self, event) -> None:
+        logging.getLogger().removeHandler(self._bridge)
         self.p.close()
         super().closeEvent(event)
 

@@ -57,6 +57,8 @@ Strategies come from two places and run side by side:
 
 ![Signals](docs/tips.png)
 
+![Statistics](docs/stats.png)
+
 See [docs/writing-strategies.md](docs/writing-strategies.md) for the rule format, the plugin
 interface and the list of features.
 
@@ -123,7 +125,11 @@ the Battle API parser, the history import, the remote page's auth and a dashboar
 
 ## Notes
 
-- The UI is in Hungarian, like the tool it was extracted from; code and docs are in English.
+- The dashboard is the original tool's own UI code (sidebar, Dashboard, feed, tips, statistics
+  and console views). It reads its data through `ui/compat`, which serves the pipeline's
+  database in the shapes those views expect, so the views themselves are kept as they were.
+  The UI is in Hungarian, like the tool it was extracted from; the pipeline code and docs are
+  in English.
 - Results come from the unofficial public API behind football.esportsbattle.com. This project
   has nothing to do with Esports Battle, and the API may change.
 - Nothing here is betting advice. Bet responsibly, and only where it is legal for you.

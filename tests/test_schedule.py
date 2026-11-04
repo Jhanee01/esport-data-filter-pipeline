@@ -9,7 +9,7 @@ DAY = "2026-11-03"
 def test_classify_by_block_start():
     s = Schedule.bundled()
     assert s.classify("Stamford Bridge", DAY, "06:30") == (1, "day")
-    assert s.classify("Wembley", DAY, "22:12") == (8, "night")     # within tolerance
+    assert s.classify("Wembley", DAY, "22:12") == (8, "night")  # within tolerance
     assert s.classify("Anfield", DAY, "17:50") == (5, "afternoon")
     assert s.classify("Nowhere", DAY, "10:00") == (None, None)
 
@@ -18,7 +18,7 @@ def test_blocks_cover_both_formats_and_cross_midnight():
     blocks = Schedule.bundled().blocks(DAY)
     assert {b.format for b in blocks} == {"8min", "12min"}
     t10 = next(b for b in blocks if b.venue == "Stamford Bridge" and b.turnus == 10)
-    assert t10.start == "02:00" and t10.start_min > _day_minutes("23:50")   # after midnight sorts last
+    assert t10.start == "02:00" and t10.start_min > _day_minutes("23:50")  # after midnight sorts last
 
 
 def test_block_status(conn):

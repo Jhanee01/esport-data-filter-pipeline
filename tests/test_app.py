@@ -49,7 +49,10 @@ def test_dashboard_builds(pipeline):
 
     app = QApplication.instance() or QApplication([])
     window = MainWindow(pipeline)
-    window.refresh()
+    window._refresh_status()
+    for i in range(len(window.views)):
+        window.sidebar._on_nav(i)
+        app.processEvents()
     assert window.windowTitle() == "Signal pipeline"
     window.timer.stop()
     window.deleteLater()

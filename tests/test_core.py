@@ -284,8 +284,14 @@ def test_unrouted_signal_stays_local(seeded):
 
 
 def test_daily_stats_by_battle_day_and_session(seeded):
-    run_cycle(seeded, FixedSource([offer()]), [RuleStrategy(rule())], None, DEFAULT_SESSIONS,
-              now=KICKOFF - timedelta(hours=1))
+    run_cycle(
+        seeded,
+        FixedSource([offer()]),
+        [RuleStrategy(rule())],
+        None,
+        DEFAULT_SESSIONS,
+        now=KICKOFF - timedelta(hours=1),
+    )
     upsert_matches(seeded, [match(500, "Ann", "Bob", 5, 1, at=KICKOFF)])
     resolve_pending(seeded, now=KICKOFF + timedelta(hours=1))
     from signal_pipeline.resolver import daily_stats
