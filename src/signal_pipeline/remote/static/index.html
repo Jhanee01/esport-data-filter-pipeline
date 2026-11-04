@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal pipeline</title>
+<style>
+  body { margin: 0; font: 15px system-ui, sans-serif; background: #111; color: #eee; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; background: #1b1b1b; }
+  h1 { font-size: 17px; margin: 0; }
+  button { background: #2cc9b4; color: #111; border: 0; border-radius: 8px; padding: 9px 14px; font-weight: 600; }
+  .checks { padding: 10px 16px; }
+  .check { padding: 6px 0; border-bottom: 1px solid #222; }
+  .ok { color: #6fdc8c; } .warn { color: #f1c21b; } .fail { color: #ff6b6b; }
+  pre { margin: 0; padding: 12px 16px; font: 12px ui-monospace, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header><h1 id="state">Signal pipeline</h1><button id="restart">Újraindítás</button></header>
+<div class="checks" id="checks"></div>
+<pre id="log"></pre>
+<script>
+  const token = new URLSearchParams(location.search).get("token");
+  const api = (path, opts = {}) => fetch(path + "?token=" + encodeURIComponent(token), opts).then(r => r.json());
+  async function refresh() {
+    const s = await api("/api/status");
+    document.getElementById("state").textContent = s.running ? "● Fut" : "○ Leállítva";
+    const checks = document.getElementById("checks");
+    checks.replaceChildren(...s.health.map(c => {
+      const d = document.createElement("div");
+      d.className = "check " + c.level;
+      d.textContent = c.name + ": " + c.message;
+      return d;
+    }));
+    document.getElementById("log").textContent = s.log.slice().reverse().join("\n");
+  }
+  document.getElementById("restart").onclick = async () => { await api("/api/restart", { method: "POST" }); refresh(); };
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>
