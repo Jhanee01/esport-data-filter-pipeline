@@ -178,8 +178,7 @@ class DashboardView(ContentView):
         self.last_day = LastDayCard()
         right.addWidget(self.last_day)
         self.chart = MiniChart()
-        right.addWidget(self.chart)
-        right.addStretch()
+        right.addWidget(self.chart, 1)  # the chart takes the free height, like the original
         top.addLayout(right, 4)
         self.root.addLayout(top, 1)
 

@@ -8,7 +8,7 @@ build/
 dist/
 
 # local data: database, routing (chat ids), Strategy Lab rules, logs
-data/
+/data/
 .env
 *.db
 *.db-*

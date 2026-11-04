@@ -544,18 +544,18 @@ class LastDayCard(QFrame):
 
 class MiniChart(QLabel):
     """Daily profit bars + cumulative dashed line, rendered with matplotlib's Agg backend into
-    a QLabel (no native window), exactly like the original dashboard. Optional: without
-    matplotlib the label just stays empty."""
+    a QLabel (no native window), like the original dashboard. It fills the free height of the
+    column and re-renders at its real size. Optional: without matplotlib it stays empty."""
 
     BG = "#12121f"
 
     def __init__(self):
         super().__init__()
-        self.setMinimumHeight(130)
-        self.setMaximumHeight(170)
-        self.setScaledContents(True)
+        self.setMinimumHeight(150)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet(f"background: {self.BG}; border-radius: 4px;")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._days: list[tuple[str, float]] = []
         try:
             from matplotlib.backends.backend_agg import FigureCanvasAgg
             from matplotlib.figure import Figure
@@ -566,9 +566,20 @@ class MiniChart(QLabel):
         self.ax = self.fig.add_subplot(111)
         self.canvas = FigureCanvasAgg(self.fig)
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._render()
+
     def draw(self, days: list[tuple[str, float]]) -> None:
-        if self.fig is None:
+        if days != self._days:
+            self._days = days
+            self._render()
+
+    def _render(self) -> None:
+        if self.fig is None or self.width() < 50 or self.height() < 50:
             return
+        days = self._days
+        self.fig.set_size_inches(self.width() / 100, self.height() / 100)
         ax = self.ax
         ax.clear()
         ax.set_facecolor(self.BG)
@@ -582,18 +593,19 @@ class MiniChart(QLabel):
             c = "#2ecc71" if v >= 0 else "#e74c3c"
             ax.bar(i, v, color=c, width=0.62, alpha=0.9, zorder=3)
             ax.bar(i, v, color=c, width=0.78, alpha=0.12, zorder=2)
-        ax.plot(
-            x,
-            cumul,
-            color=ACCENT,
-            linewidth=1.8,
-            linestyle="--",
-            alpha=0.85,
-            zorder=4,
-            marker="o",
-            markersize=3,
-            markerfacecolor=ACCENT,
-        )
+        if y:
+            ax.plot(
+                x,
+                cumul,
+                color=ACCENT,
+                linewidth=1.8,
+                linestyle="--",
+                alpha=0.85,
+                zorder=4,
+                marker="o",
+                markersize=3,
+                markerfacecolor=ACCENT,
+            )
         ax.axhline(0, color="#333344", linewidth=0.8, zorder=1)
         ax.set_xticks(x)
         ax.set_xticklabels([d[5:] for d, _ in days], color="#555566", fontsize=7, rotation=45, ha="right")
