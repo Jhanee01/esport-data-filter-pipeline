@@ -1,9 +1,9 @@
 """Desktop dashboard: the original tool's window and views on top of the pipeline.
 
-The sidebar, Dashboard, Élő Feed, Tippek, Statisztika and Konzol views are the original
-dashboard's code; they read their data through `ui.compat`, which serves the pipeline's
-database in the shapes those views expect. The Strategy Lab and the H2H search are new
-views in the same style.
+The sidebar, Dashboard, Élő Feed, Tippek, Statisztika, H2H Kereső and Konzol views are the
+original dashboard's code; they read their data through `ui.compat`, which serves the
+pipeline's database in the shapes those views expect. The Strategy Lab is a new view in the
+same style (the original one edited the original bots' configuration).
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -36,7 +35,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import features
 from ..config import Settings
 from ..service import Pipeline
 from ..sinks.telegram import Routing
@@ -102,76 +100,6 @@ class LabView(_Page):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self.root.addWidget(scroll, 1)
-
-
-class H2HView(_Page):
-    def __init__(self, p: Pipeline):
-        super().__init__("H2H Kereső")
-        from .dashboard_view import MiniCard
-
-        self.p = p
-        row = QHBoxLayout()
-        self.a, self.b = QLineEdit(), QLineEdit()
-        self.a.setPlaceholderText("Hazai játékos")
-        self.b.setPlaceholderText("Vendég játékos")
-        go = QPushButton("Keresés")
-        go.clicked.connect(self._search)
-        self.b.returnPressed.connect(self._search)
-        row.addWidget(self.a)
-        row.addWidget(self.b)
-        row.addWidget(go)
-        self.root.addLayout(row)
-        grid = QGridLayout()
-        grid.setSpacing(10)
-        self.mini = {
-            "n": MiniCard("Meccs"),
-            "goals": MiniCard("Gólátlag"),
-            "over": MiniCard("Over 5.5"),
-            "btts": MiniCard("BTTS"),
-            "p1": MiniCard("Hazai nyert", "–", GREEN),
-            "p2": MiniCard("Vendég nyert", "–", RED),
-        }
-        for i, card in enumerate(self.mini.values()):
-            grid.addWidget(card, 0, i)
-        self.root.addLayout(grid)
-        self.table = _table(["Dátum", "Pálya", "Hazai", "Eredmény", "Vendég"])
-        self.root.addWidget(self.table, 1)
-
-    def _search(self) -> None:
-        a, b = self.a.text().strip(), self.b.text().strip()
-        if not a or not b:
-            return
-        with self.p.lock:
-            f = features.compute(self.p.conn, a, b, "9999-12-31", line=5.5, h2h_window=50)
-            rows = self.p.conn.execute(
-                "SELECT * FROM matches WHERE (player1 = ? COLLATE NOCASE AND player2 = ? COLLATE NOCASE)"
-                " OR (player1 = ? COLLATE NOCASE AND player2 = ? COLLATE NOCASE)"
-                " ORDER BY start_utc DESC LIMIT 50",
-                (a, b, b, a),
-            ).fetchall()
-
-        def pct(v):
-            return "–" if v is None else f"{v:.0%}"
-
-        self.mini["n"].set_value(str(f.h2h_n))
-        self.mini["goals"].set_value(f"{f.h2h_avg_goals:.2f}" if f.h2h_avg_goals is not None else "–")
-        self.mini["over"].set_value(pct(f.h2h_over_rate))
-        self.mini["btts"].set_value(pct(f.h2h_btts_rate))
-        self.mini["p1"].set_value(pct(f.h2h_p1_win_rate))
-        self.mini["p2"].set_value(pct(f.h2h_p2_win_rate))
-        _fill(
-            self.table,
-            [
-                [
-                    f"{r['local_date']} {r['local_time']}",
-                    r["venue"],
-                    r["player1"],
-                    f"{r['score1']}–{r['score2']}",
-                    r["player2"],
-                ]
-                for r in rows
-            ],
-        )
 
 
 class RoutingDialog(QDialog):
@@ -254,6 +182,7 @@ class MainWindow(QMainWindow):
         runtime.PIPELINE = p  # the original views read through ui.compat
         from .dashboard_view import DashboardView
         from .feed_view import FeedView
+        from .h2h_view import H2HView
         from .log_view import LogView
         from .sidebar import Sidebar
         from .stats_view import StatsView
@@ -278,7 +207,7 @@ class MainWindow(QMainWindow):
             self.labview,
             TipsView(),
             StatsView(),
-            H2HView(p),
+            H2HView(),
             self.log_view,
         ]
         self.stack = QStackedWidget()

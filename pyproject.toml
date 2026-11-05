@@ -41,5 +41,5 @@ ignore = ["E501"]
 # Views taken over verbatim from the original dashboard: only check them for real errors,
 # not for style, so they stay as close to the original as possible.
 [tool.ruff.lint.per-file-ignores]
-"src/signal_pipeline/ui/{sidebar,dashboard_view,tips_view,stats_view,feed_view,log_view,toast}.py" = ["E", "W", "I", "B", "UP", "F841"]
-"src/signal_pipeline/ui/compat/stats_manager.py" = ["E", "W", "I", "B", "UP"]
+"src/signal_pipeline/ui/{sidebar,dashboard_view,tips_view,stats_view,feed_view,log_view,toast,h2h_view}.py" = ["E", "W", "I", "B", "UP", "F841"]
+"src/signal_pipeline/ui/compat/{stats_manager,tip_history}.py" = ["E", "W", "I", "B", "UP", "F841"]

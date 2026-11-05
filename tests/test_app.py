@@ -57,3 +57,22 @@ def test_dashboard_builds(pipeline):
     window.timer.stop()
     window.deleteLater()
     app.processEvents()
+
+
+def test_h2h_compat_reads_the_database(pipeline):
+    from conftest import match
+
+    from signal_pipeline.store import upsert_matches
+    from signal_pipeline.ui.compat import runtime
+    from signal_pipeline.ui.compat.h2h_names import load_index
+    from signal_pipeline.ui.compat.h2h_reader import get_h2h_teams, get_player_h2h_stats
+
+    runtime.PIPELINE = pipeline
+    upsert_matches(pipeline.conn, [match(1, "Ann", "Bob", 3, 1), match(2, "Bob", "Ann", 2, 2),
+                                   match(3, "Ann", "Cid", 1, 0, fmt="12min")])
+    stats = get_player_h2h_stats("ann", "BOB")
+    assert stats["overall"]["n"] == 2 and stats["overall"]["w1"] == 1 and stats["overall"]["d"] == 1
+    assert stats["recent"][0]["g1"] == 2   # newest first, from Ann's side
+    assert get_h2h_teams("Ann", "Bob") == (["A", "B"], ["A", "B"])
+    names, opponents = load_index("8")
+    assert names == ["Ann", "Bob"] and opponents["Ann"] == ["Bob"]
