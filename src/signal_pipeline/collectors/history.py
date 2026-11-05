@@ -44,7 +44,7 @@ def import_snapshot(conn: sqlite3.Connection, url: str = SNAPSHOT_URL) -> int:
     """Download the esoccer-battle-mcp snapshot and import it."""
     with tempfile.TemporaryDirectory() as tmp:
         gz, db = Path(tmp) / "battle.db.gz", Path(tmp) / "battle.db"
-        req = urllib.request.Request(url, headers={"User-Agent": "esports-signal-pipeline"})
+        req = urllib.request.Request(url, headers={"User-Agent": "esport-data-filter-pipeline"})
         with urllib.request.urlopen(req, timeout=120) as r, open(gz, "wb") as f:
             size = 0
             while chunk := r.read(1 << 20):

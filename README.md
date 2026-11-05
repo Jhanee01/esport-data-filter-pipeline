@@ -1,4 +1,4 @@
-# esports-signal-pipeline
+# esport-data-filter-pipeline
 
 A desktop pipeline for esports football (Esoccer Battle, the EA FC 8 and 12 minute league): it
 reads bookmaker prices, runs your strategies on them, sends the signals to Telegram, and settles

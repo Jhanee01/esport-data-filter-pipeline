@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "esports-signal-pipeline"
+name = "esport-data-filter-pipeline"
 version = "0.1.0"
 description = "Odds feed → pluggable strategies → Telegram signals → automatic results, with a desktop dashboard and a Strategy Lab."
 readme = "README.md"

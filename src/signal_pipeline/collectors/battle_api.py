@@ -23,7 +23,7 @@ from ..store import now_utc, upsert_matches
 log = logging.getLogger(__name__)
 
 BASE = "https://football.esportsbattle.com/api/"
-HEADERS = {"User-Agent": "esports-signal-pipeline", "Accept": "application/json"}
+HEADERS = {"User-Agent": "esport-data-filter-pipeline", "Accept": "application/json"}
 PAUSE_S = 0.3  # be gentle: pause between requests
 FINISHED_MATCH = 3
 FINISHED_TOURNAMENT = 4
