@@ -97,6 +97,10 @@ python -m signal_pipeline collect                     # today's results and fixt
 python -m signal_pipeline ui                          # dashboard
 ```
 
+On Windows you can build a small native launcher with the football icon, like the original
+tool's: run `launcheruild.bat` once, then start the dashboard with **Signal Pipeline.exe** (no
+console window; it uses the project's `.venv`).
+
 Other commands:
 
 ```bash
