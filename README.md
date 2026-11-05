@@ -1,5 +1,7 @@
 # esport-data-filter-pipeline
 
+[![CI](https://github.com/Jhanee01/esport-data-filter-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Jhanee01/esport-data-filter-pipeline/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
 A desktop pipeline for esports football (Esoccer Battle, the EA FC 8 and 12 minute league): it
 reads bookmaker prices, runs your strategies on them, sends the signals to Telegram, and settles
 every signal from the official results. A dashboard shows health, signals and results, a
