@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
+from .combo_style import style_combo
 from .compat.tips_reader import TipsReader
 from .compat.stats_manager import get_strategy_tabs
 
@@ -334,6 +335,7 @@ class TipsView(QWidget):
         self.cmb_result = QComboBox()
         self.cmb_result.addItems(["Mind", "Folyamatban", "Nyertes", "Vesztes", "Push", "Szűrt"])
         self.cmb_result.setFixedHeight(30)
+        style_combo(self.cmb_result)
         self.cmb_result.currentIndexChanged.connect(self._apply_filter)
         filter_row.addWidget(self.cmb_result)
 
@@ -341,6 +343,7 @@ class TipsView(QWidget):
         self.cmb_session = QComboBox()
         self.cmb_session.addItems(["Mind", "Day", "Afternoon", "Night"])
         self.cmb_session.setFixedHeight(30)
+        style_combo(self.cmb_session)
         self.cmb_session.currentIndexChanged.connect(self._apply_filter)
         filter_row.addWidget(self.cmb_session)
 

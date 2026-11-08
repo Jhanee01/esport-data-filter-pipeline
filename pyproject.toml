@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "esport-data-filter-pipeline"
-version = "1.0.1"
+version = "1.0.2"
 description = "Odds feed → pluggable strategies → Telegram signals → automatic results, with a desktop dashboard and a Strategy Lab."
 readme = "README.md"
 license = { text = "MIT" }
