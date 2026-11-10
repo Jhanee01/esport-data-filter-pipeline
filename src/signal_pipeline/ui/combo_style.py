@@ -9,7 +9,7 @@ opens the popup only as wide as the box, so longer entries get cut off. Here:
 Rows are painted by a custom delegate, because the theme's QSS rules (dark
 text on the selected row) cannot be overridden reliably with a style sheet.
 """
-from PySide6.QtCore import Qt, QRectF, QSize
+from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import QComboBox, QStyle, QStyledItemDelegate
 
