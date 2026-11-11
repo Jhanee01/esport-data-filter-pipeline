@@ -41,7 +41,9 @@ flowchart LR
 4. **Signal.** A new signal is stored once per strategy and offer, and sent to the Telegram chat
    its routing points to: per strategy, per session (day / afternoon / night), or a default.
 5. **Settle.** The resolver matches each signal to the Battle result (players in either order,
-   kick-off within ±20 minutes) and marks it won, lost, push or void.
+   kick-off within ±20 minutes) and marks it won, lost, push or void. When the Battle plays a
+   match later than listed, the resolver finds it by the home/away order of the pair, which
+   stays the same on a replay. A match missing from a finished block is voided straight away.
 
 The last link of my own chain, placing the bets, is a separate tool:
 [betplacer-standalone](https://github.com/Jhanee01/betplacer-standalone). It is not part of this
